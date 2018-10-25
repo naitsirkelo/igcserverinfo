@@ -16,20 +16,13 @@ behind the structure without disrupting the flow or making a clutter of the code
 
 **Libraries used:**
 
-1. github.com/marni/goigc	
-2. github.com/p3lim/iso8601	
+1. github.com/marni/goigc
+2. github.com/p3lim/iso8601
+3. github.com/BurntSushi/toml
+4. gopkg.in/mgo.v2
+5. gopkg.in/mgo.v2/bson
+6. github.com/gorilla/mux
+7. github.com/ashwanthkumar/slack-go-webhook
 
 
 
-The following sections of code are used as alternatives.
-
-
-First section:
-
-
-
-```
-
-
-
-```
