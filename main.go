@@ -15,7 +15,6 @@ import (
 	"github.com/marni/goigc"				// Main library for working on IGC files
 	"github.com/p3lim/iso8601"			// For formatting time into ISO 8601
 	"gopkg.in/mgo.v2"								// Connecting to MongoDB
-	"gopkg.in/mgo.v2/bson"					//
 	"github.com/gorilla/mux"				// Creating router
 )
 
@@ -25,12 +24,14 @@ var Timestamps map[int]string // - For storing URL ID and timestamp as string
 var Webhooks map[int]string		//
 var Ids []int									// Declare slice for storing IDs
 var startTime time.Time				// Variable for calculating uptime
-var t_latest time.Time	// Globally latest
-var t_start time.Time		// First timestamp for added track
-var t_stop time.Time		// Latest timestamp in list of tracks
+var t_latest 	string		// Globally latest
+var t_start 	string		// First timestamp for added track
+var t_stop 		string		// Latest timestamp in list of tracks
 
 var mongoDBurl string
 var webhookUrl string
+
+var session *mgo.Session
 
 
 type MongoDB struct {
@@ -47,6 +48,7 @@ var db *mgo.Database
 const (
 	MAXTRACKS = 5
 	MONGODBURL = "mongodb://oleklar:Passord1@ds139992.mlab.com:39992/igc"
+	WEBHOOKURL = "https://hooks.slack.com/services/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"
 )
 
 
@@ -96,7 +98,6 @@ type WebhookUrl struct {
 type MinTriggerValue struct {
 	Type 	int				`json:"value"`
 }
-
 
 type WebhookInfo struct {
 	WebhookUrl 				string 	`json:"webhookURL"`
@@ -195,9 +196,9 @@ func handleTrack(w http.ResponseWriter, r *http.Request) {
 			var temp map[string]interface{}	// Interface is unknown type / C++ auto
 
 			if (len(TrackUrl) == 0) {
-				t_start = time.Now()	// Store first timestamp
+				t_start = iso8601.Format(time.Now())	// Store first timestamp
 			}
-			t_latest = time.Now()		// Update latest timestamp
+			t_latest = iso8601.Format(time.Now())		// Update latest timestamp
 
 			err2 := json.NewDecoder(r.Body).Decode(&temp)					// Decode posted url
 			if (err2 != nil) {
@@ -251,13 +252,11 @@ func handleTicker(w http.ResponseWriter, r *http.Request) {
 			webhookId := parts[5]
 			if (parts[4] == "latest") {
 				// GET /api/ticker/latest
-				fmt.Fprintln(w, "\nNumber of Tracks in DB: ", iso8601.Format(t_latest))
+				fmt.Fprintln(w, "\nNumber of Tracks in DB: ", t_latest)
 
 			} else {
 				// GET /api/ticker/<timestamp>
 				timestamp := parts[4]
-
-
 
 
 			}
@@ -266,8 +265,8 @@ func handleTicker(w http.ResponseWriter, r *http.Request) {
 			updateTrackIds()
 			processing := 0
 
-			temp := Timestamp{iso8601.Format(t_latest), iso8601.Format(t_start),
-											  iso8601.Format(t_stop), Ids, processing}
+			temp := Timestamp{t_latest, t_start,
+											  t_stop, Ids, processing}
 
 			http.Header.Add(w.Header(), "Content-type", "application/json")
 
@@ -294,7 +293,7 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if (r.Method == http.MethodGet) {	// Check if GET was called
 		temp := WebhookInfo{}
 
-		temp.WebhookUrl = " "
+		temp.WebhookUrl = WEBHOOKURL
 
 		raw, _ := json.Marshal(temp)
 
@@ -305,12 +304,18 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 	} else if (r.Method == http.MethodPost) {
-		var temp WebhookInfo
 
-		err := json.NewDecoder(r.Body).Decode(&temp)
+		temp := WebhookInfo{}
+
+		temp.Webhookurl = WEBHOOKURL
+		temp.Mintriggervalue = 1
+
+		raw, _ := json.Marshal(temp)
+		resp, err := http.Post(WEBHOOKURL, "application/json", bytes.NewBuffer(raw))
 		if err != nil {
-			http.Error(w, "Decoding Failed. Request Timeout.", 400)	// Bad Request
-		}
+			fmt.Println(err)
+			fmt.Println(ioutil.ReadAll(resp.Body))
+	}
 
 	} else if (r.Method == http.MethodDelete) {
 
@@ -379,11 +384,29 @@ func updateTrackIds() {
 }
 
 
+func getPort() string {
+	 	var port = os.Getenv("PORT")
+ 				// Port sets to :8080 as a default
+ 		if (port == "") {
+ 			port = "8080"
+			fmt.Println("No PORT variable detected, defaulting to " + port)
+ 		}
+ 		return (":" + port)
+}
+
+
 func init() {
-	session, err := mgo.Dial(db.DatabaseURL)
+
+	session, err = mgo.Dial(db.DatabaseURL)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
+	c := session.DB(database).C(collection)
+	err2 := c.Find(query).One(&result)
+	if err != nil {
+		log.Fatal(err2)
+	}
+	session.SetSafe(&mgo.Safe{})
 
 	TrackUrl = make(map[int]string) 	// Initializing map arrays
 	Webhooks = make(map[int]string)		//
@@ -391,9 +414,7 @@ func init() {
 	Ids = make([]int, len(TrackUrl))	// Initialize empty ID int slice
 	startTime = time.Now()						// Initializes timer
 
-	mongoDBurl = "mongodb://oleklar:Passord1@ds139992.mlab.com:39992/igc"
-	webhookUrl = "https://oleklar.slack.com/messages/CDJ5VV12T/"
-
+	slackUrl = "https://oleklar.slack.com/messages/CDJ5VV12T/"
 }
 
 
@@ -408,6 +429,8 @@ func main() {
 			"tracksDB",
 			"tracks",
 		}
+
+		port := getPort()
 
 		init()
 		r := mux.NewRouter()
@@ -426,7 +449,7 @@ func main() {
 
 		r.HandleFunc("/paragliding/admin/api/", handleAdmin)
 
-		if err := http.ListenAndServe(":8080", r); err != nil {
+		if err := http.ListenAndServe(port, r); err != nil {
 			log.Fatal(err)
 		}
 }
