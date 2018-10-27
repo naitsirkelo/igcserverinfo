@@ -3,22 +3,20 @@ package main
 import (
 	"fmt"
 	"encoding/json"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"strconv"
+	"bytes"
 	"time"
-	// "log"
+	"log"
 	"os"
 	"io"
-	// "github.com/naitsirkelo/igcserverinfo"
 	"github.com/marni/goigc"				// Main library for working on IGC files
 	"github.com/p3lim/iso8601"			// For formatting time into ISO 8601
-	// "github.com/BurntSushi/toml"	// For accessing config file
-	// mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2"
-	// "gopkg.in/mgo.v2/bson"
-	"github.com/gorilla/mux"
-	"github.com/ashwanthkumar/slack-go-webhook"	// Building and sending webhooks
+	"gopkg.in/mgo.v2"								// Connecting to MongoDB
+	"gopkg.in/mgo.v2/bson"					//
+	"github.com/gorilla/mux"				// Creating router
 )
 
 
@@ -30,20 +28,29 @@ var startTime time.Time				// Variable for calculating uptime
 var t_latest time.Time	// Globally latest
 var t_start time.Time		// First timestamp for added track
 var t_stop time.Time		// Latest timestamp in list of tracks
-var notStarted time.Time
 
-mongoDBurl := "mongodb://oleklar:Passord1@ds139992.mlab.com:39992/igc"; // Database host
-webhookUrl := "https://oleklar.slack.com/messages/CDJ5VV12T/"
+var mongoDBurl string
+var webhookUrl string
+
+
+type MongoDB struct {
+	DatabaseURL    string
+	DatabaseName   string
+	Collection		 string
+}
+
+
+var mongoTracks = MongoDB{DatabaseURL: MONGODBURL, DatabaseName: "igc", Collection: "tracks"}
+var mongoTimestamps = MongoDB{DatabaseURL: MONGODBURL, DatabaseName: "igc", Collection: "timestamps"}
+var db *mgo.Database
 
 const (
-	COLLECTION_1 = "tracks"
-	COLLECTION_2 = "timestamps"
 	MAXTRACKS = 5
+	MONGODBURL = "mongodb://oleklar:Passord1@ds139992.mlab.com:39992/igc"
 )
 
 
 type Track struct {
-	// Id bson.Object 				`bson:"_id,omitempty"`
 	H_date string					`json:"date"`
 	Pilot string					`json:"pilot"`
 	Glider string					`json:"glider"`
@@ -71,6 +78,29 @@ type MetaData struct {		// Encoding meta information of server
 
 type TrackId struct {			// Encoding URL ID
 	Id int	`json:"id"`
+}
+
+
+type TimestampDB struct {
+	timestamps map[string]Timestamp
+}
+
+type TrackDB struct {
+	tracks map[string]Track
+}
+
+type WebhookUrl struct {
+	Type 	string		`json:"type"`
+}
+
+type MinTriggerValue struct {
+	Type 	int				`json:"value"`
+}
+
+
+type WebhookInfo struct {
+	WebhookUrl 				string 	`json:"webhookURL"`
+	MinTriggerValue 	int			`json:"minTriggerValue"`
 }
 
 
@@ -221,11 +251,13 @@ func handleTicker(w http.ResponseWriter, r *http.Request) {
 			webhookId := parts[5]
 			if (parts[4] == "latest") {
 				// GET /api/ticker/latest
-				fmt.Fprintln(w, "\nNumber of Tracks in DB: ", iso8601.Format(t_Latest))
+				fmt.Fprintln(w, "\nNumber of Tracks in DB: ", iso8601.Format(t_latest))
 
 			} else {
 				// GET /api/ticker/<timestamp>
 				timestamp := parts[4]
+
+
 
 
 			}
@@ -234,7 +266,8 @@ func handleTicker(w http.ResponseWriter, r *http.Request) {
 			updateTrackIds()
 			processing := 0
 
-			temp := Timestamp{time.latest, time.start, time.stop, Ids, processing}
+			temp := Timestamp{iso8601.Format(t_latest), iso8601.Format(t_start),
+											  iso8601.Format(t_stop), Ids, processing}
 
 			http.Header.Add(w.Header(), "Content-type", "application/json")
 
@@ -259,24 +292,20 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if (r.Method == http.MethodGet) {	// Check if GET was called
+		temp := WebhookInfo{}
 
-		temp := slack.Attachment {}
-    temp.AddField(slack.Field { Title: "Author", Value: "oleklar" }).AddField(slack.Field { Title: "Status", Value: "Completed" })
-    payload := slack.Payload {
-      Text: "Hello",
-      Username: "oleklar",
-      Channel: "#general",
-      IconEmoji: ":monkey_face:",
-      Attachments: []slack.Attachment{temp},
-    }
-    err := slack.Send(webhookUrl, "", payload)
-    if len(err) > 0 {
-      fmt.Printf("error: %s\n", err)
-    }
+		temp.WebhookUrl = " "
 
+		raw, _ := json.Marshal(temp)
+
+		resp, err := http.Post(MONGODBURL, "application/json", bytes.NewBuffer(raw))
+		if err != nil {
+			fmt.Println(err)
+			fmt.Println(ioutil.ReadAll(resp.Body))
+		}
 
 	} else if (r.Method == http.MethodPost) {
-		var temp WebhookStruct
+		var temp WebhookInfo
 
 		err := json.NewDecoder(r.Body).Decode(&temp)
 		if err != nil {
@@ -306,7 +335,7 @@ func handleAdmin(w http.ResponseWriter, r *http.Request) {
 
 	} else if (r.Method == http.MethodDelete && parts[4] == "tracks") {
 																// Check if DELETE was used and correct path called
-		trackSlice = db.GetAll()
+		trackSlice := db.GetAll()
 		trackSlice = trackSlice[:0]	// Empties the track slice
 
 		fmt.Fprintln(w, "All Tracks deleted from DB.")
@@ -320,18 +349,6 @@ func handleAdmin(w http.ResponseWriter, r *http.Request) {
 func handleInvalid(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 }
-
-				// Find the correct Port to run app on Heroku
-func getPort() string {
-	 	var port = os.Getenv("PORT")
- 				// Port sets to :8080 as a default
- 		if (port == "") {
- 			port = "8080"
-			fmt.Println("No PORT variable detected, defaulting to " + port)
- 		}
- 		return (":" + port)
-}
-
 
 func redirectApi(w http.ResponseWriter, r *http.Request) {
 		// http.Redirect(w, r, "http://www.golang.org", 301)
@@ -362,61 +379,35 @@ func updateTrackIds() {
 }
 
 
-type MongoDB struct {
-	DatabaseURL    string
-	DatabaseName   string
-	CollectionName string
-}
+func init() {
+	session, err := mgo.Dial(db.DatabaseURL)
+	if err != nil {
+		panic(err)
+	}
 
+	TrackUrl = make(map[int]string) 	// Initializing map arrays
+	Webhooks = make(map[int]string)		//
 
-type TimestampMongoDB struct {
-	DatabaseURL   					string
-	DatabaseName 						string
-	TimestampCollectionName string
-}
+	Ids = make([]int, len(TrackUrl))	// Initialize empty ID int slice
+	startTime = time.Now()						// Initializes timer
 
+	mongoDBurl = "mongodb://oleklar:Passord1@ds139992.mlab.com:39992/igc"
+	webhookUrl = "https://oleklar.slack.com/messages/CDJ5VV12T/"
 
-type TrackMongoDB struct {
-	DatabaseURL   			string
-	DatabaseName 				string
-	TrackCollectionName string
-}
-
-
-type TimestampDB struct {
-	timestamps map[string]Timestamp
-}
-
-
-type TrackDB struct {
-	tracks map[string]Track
 }
 
 
 func main() {
-		// trackdb.Global_db = &trackdb.TracksMongoDB{}
 
-		// Using MongoDB based storage
-		mongoDBurl := os.Getenv("PARAGLIDING_MONGO")
 		if len(mongoDBurl) == 0 {
 			log.Fatal("PARAGLIDING_MONGO environment variable is not set (put mongodb url in here)")
 		}
-
-		TrackUrl = make(map[int]string) 	// Initializing map arrays
-		Webhooks = make(map[int]string)		//
-
-		Ids = make([]int, len(TrackUrl))	// Initialize empty ID int slice
-		startTime = time.Now()						// Initializes timer
 
 		trackdb.Global_db = &trackdb.TracksMongoDB{
 			mongoDBurl,
 			"tracksDB",
 			"tracks",
 		}
-
-		trackdb.Global_db.Init()
-
-		port := os.Getenv("PORT")
 
 		init()
 		r := mux.NewRouter()
@@ -435,9 +426,7 @@ func main() {
 
 		r.HandleFunc("/paragliding/admin/api/", handleAdmin)
 
-		http.ListenAndServe(":"+port, nil)
-		// if err := http.ListenAndServe(":3000", r); err != nil {
-		// 	log.Fatal(err)
-		// }
-
+		if err := http.ListenAndServe(":8080", r); err != nil {
+			log.Fatal(err)
+		}
 }

@@ -6,12 +6,6 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
-// MongoDB stores the details of the DB connection.
-type MongoDB struct {
-	DatabaseURL    string
-	DatabaseName   string
-	CollectionName string
-}
 
 type Track struct {
 	Id bson.Object 				`bson:"_id,omitempty"`
@@ -23,9 +17,18 @@ type Track struct {
 	Track_url	string			`json:"track_src_url"`
 }
 
-/*
-Init initializes the mongo storage.
-*/
+				// Find the correct Port to run app on Heroku
+func getPort() string {
+	 	var port = os.Getenv("PORT")
+ 				// Port sets to :8080 as a default
+ 		if (port == "") {
+ 			port = "8080"
+			fmt.Println("No PORT variable detected, defaulting to " + port)
+ 		}
+ 		return (":" + port)
+}
+
+
 func (db *MongoDB) Init() {
 	session, err := mgo.Dial(db.DatabaseURL)
 	if err != nil {
@@ -47,9 +50,7 @@ func (db *MongoDB) Init() {
 	}
 }
 
-/*
-Add adds new tracks to the storage.
-*/
+
 func (db *MongoDB) Add(t Track) error {
 	session, err := mgo.Dial(db.DatabaseURL)
 	if err != nil {
@@ -67,9 +68,7 @@ func (db *MongoDB) Add(t Track) error {
 	return nil
 }
 
-/*
-Count returns the current count of the students in in-memory storage.
-*/
+
 func (db *MongoDB) Count() int {
 	session, err := mgo.Dial(db.DatabaseURL)
 	if err != nil {
@@ -87,9 +86,7 @@ func (db *MongoDB) Count() int {
 	return count
 }
 
-/*
-Get returns a track with a given ID or empty track struct.
-*/
+
 func (db *MongoDB) Get(keyID string) (Track, bool) {
 	session, err := mgo.Dial(db.DatabaseURL)
 	if err != nil {
@@ -107,9 +104,7 @@ func (db *MongoDB) Get(keyID string) (Track, bool) {
 	return track, true
 }
 
-/*
-GetAll returns a slice with all the tracks.
-*/
+
 func (db *MongoDB) GetAll() []Track {
 	session, err := mgo.Dial(db.DatabaseURL)
 	if err != nil {
