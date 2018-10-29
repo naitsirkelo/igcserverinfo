@@ -31,7 +31,9 @@ var t_stop 		string		// Latest timestamp in list of tracks
 var mongoDBurl string
 var webhookUrl string
 
-var session *mgo.Session
+var sessionTr *mgo.Session
+var sessionTi *mgo.Session
+var sessionWh *mgo.Session
 
 
 type MongoDB struct {
@@ -40,9 +42,17 @@ type MongoDB struct {
 	Collection		 string
 }
 
+type WebhookStorage struct {
+	Id    	string
+	Url   	string
+	TriggerCounter	[]int
+}
+
 
 var mongoTracks = MongoDB{DatabaseURL: MONGODBURL, DatabaseName: "igc", Collection: "tracks"}
 var mongoTimestamps = MongoDB{DatabaseURL: MONGODBURL, DatabaseName: "igc", Collection: "timestamps"}
+var mongoWebhooks = WebhookStorage{Id: 0, Url: WEBHOOKURL, TriggerCounter: 0}
+
 var db *mgo.Database
 
 const (
@@ -262,7 +272,7 @@ func handleTicker(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 
-			updateTrackIds()
+			updateTrackIds()	// Gets correct Ids to the slice
 			processing := 0
 
 			temp := Timestamp{t_latest, t_start,
@@ -304,23 +314,25 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 	} else if (r.Method == http.MethodPost) {
+		// Webhook Invocation
 
-		temp := WebhookInfo{}
+		// When was this called?
 
-		temp.Webhookurl = WEBHOOKURL
-		temp.Mintriggervalue = 1
+		// Iterate through all Timetamp elements in Map,
+		// filter out all timestamps larger.
 
-		raw, _ := json.Marshal(temp)
+		// Set new timestamp for invocation.
+
+		raw, _ := json.Marshal(/*Map information*/)
 		resp, err := http.Post(WEBHOOKURL, "application/json", bytes.NewBuffer(raw))
 		if err != nil {
 			fmt.Println(err)
 			fmt.Println(ioutil.ReadAll(resp.Body))
-	}
+		}
 
 	} else if (r.Method == http.MethodDelete) {
 
-
-
+		Webhooks[webhookId] = 0;
 
 	} else {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -361,20 +373,6 @@ func redirectApi(w http.ResponseWriter, r *http.Request) {
 }
 
 
-func tickerFunc() {
-	ticker := time.NewTicker(500 * time.Millisecond)
-    go func() {
-        for t := range ticker.C {
-            fmt.Println("Tick at", t)
-        }
-    }()
-
-    time.Sleep(1600 * time.Millisecond)
-    ticker.Stop()
-    fmt.Println("Ticker stopped")
-}
-
-
 func updateTrackIds() {
 	Ids = Ids[:0]											// Reseting slice before appending keys
 	for key, url := range TrackUrl {	// Append each key in TrackUrl to the slice 'a'
@@ -397,10 +395,23 @@ func getPort() string {
 
 func init() {
 
-	session, err = mgo.Dial(db.DatabaseURL)
+	// Creating all three sessions, one for each Mlab table.
+
+	sessionTr, err = mgo.Dial(db.DatabaseURL)
 	if err != nil {
 		log.Fatal(err)
 	}
+	sessionTi, err2 = mgo.Dial(db.DatabaseURL)
+	if err2 != nil {
+		log.Fatal(err2)
+	}
+	sessionWh, err3 = mgo.Dial(db.DatabaseURL)
+	if err3 != nil {
+		log.Fatal(err3)
+	}
+
+
+	//Readme: Assume collection are created upon launch
 	c := session.DB(database).C(collection)
 	err2 := c.Find(query).One(&result)
 	if err != nil {
@@ -420,15 +431,9 @@ func init() {
 
 func main() {
 
-		if len(mongoDBurl) == 0 {
-			log.Fatal("PARAGLIDING_MONGO environment variable is not set (put mongodb url in here)")
-		}
-
-		trackdb.Global_db = &trackdb.TracksMongoDB{
-			mongoDBurl,
-			"tracksDB",
-			"tracks",
-		}
+		/*
+		Please see the ReadMe file for design decisions and various comments.
+		*/
 
 		port := getPort()
 
@@ -452,4 +457,18 @@ func main() {
 		if err := http.ListenAndServe(port, r); err != nil {
 			log.Fatal(err)
 		}
+}
+
+
+func tickerFunc() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+    go func() {
+        for t := range ticker.C {
+            fmt.Println("Tick at", t)
+        }
+    }()
+
+    time.Sleep(1600 * time.Millisecond)
+    ticker.Stop()
+    fmt.Println("Ticker stopped")
 }
